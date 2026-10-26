@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>WindWatt</title>
+<meta name="theme-color" content="#f4f6f8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111417" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+/* Layout: één kolom, max 760px, vaste tabbalk onderin; cijfers in condensed. */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --ink: #14181d; --muted: #5b6470; --line: #dde2e8;
+  --accent: #2a78d6; --head: #eb6834; --tail: #2a78d6; --device: #1baf7a; --neutral: #b0afa8;
+  --chip: #eaeef3; --good: #0ca30c; --warn: #b26b00;
+  --f-body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-num: "Barlow Condensed", "Barlow", system-ui, sans-serif;
+  --r: 10px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111417; --surface: #1a1e23; --ink: #eef0f2; --muted: #a3abb5; --line: #2c3239;
+    --accent: #3987e5; --head: #e2703f; --tail: #3987e5; --device: #199e70; --neutral: #6c6f73;
+    --chip: #242a31; --good: #3fbf3f; --warn: #e3a12a;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--ink); font: 15px/1.45 var(--f-body);
+  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  -webkit-text-size-adjust: 100%;
+}
+.wrap {
+  max-width: 760px; margin: 0 auto; display: grid; gap: 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: calc(12px + env(safe-area-inset-top, 0px)) 24px;
+}
+header.top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.brand { font: 700 26px/1 var(--f-num); letter-spacing: .02em; text-transform: uppercase; }
+.brand span { color: var(--head); }
+.status { font-size: 13px; color: var(--muted); text-align: right; }
+h2 { font: 600 13px/1.2 var(--f-body); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 8px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 620px) { .grid4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+label.f { display: grid; gap: 4px; font-size: 13px; color: var(--muted); min-width: 0; }
+select, input[type=number], input[type=text], input[type=password] {
+  font: 500 16px var(--f-body); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 9px 10px; width: 100%; min-width: 0;
+}
+select:focus-visible, input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button { font: 600 15px var(--f-body); border-radius: 8px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); padding: 9px 14px; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.ghost { background: transparent; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button { padding: 7px 11px; font-weight: 500; font-size: 14px; }
+.seg button[aria-pressed=true] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; }
+.toggle input { width: 20px; height: 20px; accent-color: var(--accent); }
+
+.runhead { display: grid; gap: 2px; }
+.runhead .name { font: 600 19px/1.25 var(--f-body); text-wrap: balance; }
+.runhead .sub { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+.windline { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.windline b { color: var(--ink); font-weight: 600; }
+
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 620px) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; display: grid; gap: 2px; min-width: 0; }
+.tile .k { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.tile .v { font: 600 34px/1.05 var(--f-num); font-variant-numeric: tabular-nums; }
+.tile .v small { font-size: 18px; font-weight: 500; color: var(--muted); }
+.tile .d { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tile .d .up { color: var(--head); font-weight: 600; }
+
+.chart { position: relative; width: 100%; height: 230px; touch-action: pan-y; }
+.chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.chart text { font: 12px var(--f-body); fill: var(--muted); font-variant-numeric: tabular-nums; }
+.tip { position: absolute; top: 0; pointer-events: none; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: 13px; line-height: 1.35; font-variant-numeric: tabular-nums; box-shadow: 0 4px 14px rgb(0 0 0 / .12); white-space: nowrap; }
+.tip i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.legend i { display: inline-block; width: 16px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.legend i.dot { background: repeating-linear-gradient(90deg, var(--neutral) 0 3px, transparent 3px 6px); }
+
+.bars { display: grid; gap: 8px; }
+.bar { display: grid; grid-template-columns: 9.5em minmax(0, 1fr) 4.6em; gap: 8px; align-items: center; font-size: 14px; }
+.bar .lab { color: var(--muted); }
+.bar .track { position: relative; height: 14px; }
+.bar .track .zero { position: absolute; top: -3px; bottom: -3px; width: 1px; background: var(--line); }
+.bar .track .fill { position: absolute; top: 0; bottom: 0; background: var(--accent); }
+.bar .track .fill.pos { border-radius: 0 4px 4px 0; }
+.bar .track .fill.neg { border-radius: 4px 0 0 4px; background: var(--tail); opacity: .55; }
+.bar .val { text-align: right; font: 600 15px var(--f-num); font-variant-numeric: tabular-nums; }
+
+#map { height: 320px; border-radius: 8px; z-index: 0; background: var(--chip); }
+.scale { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); margin-top: 8px; }
+.scale .ramp { flex: 1; height: 8px; border-radius: 4px; background: linear-gradient(90deg, var(--tail), var(--neutral), var(--head)); }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+td.num, th.num { text-align: right; }
+.scroll { overflow-x: auto; }
+.note { font-size: 13px; color: var(--muted); }
+.note.err { color: var(--head); }
+.kv { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; font-variant-numeric: tabular-nums; padding: 4px 0; border-bottom: 1px dashed var(--line); }
+.kv:last-child { border-bottom: 0; }
+.kv b { font-weight: 600; }
+
+nav.tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; display: grid; grid-template-columns: repeat(3, 1fr);
+  background: var(--surface); border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px);
+}
+nav.tabs button { border: 0; border-radius: 0; background: transparent; padding: 14px 6px; font-size: 15px; color: var(--muted); }
+nav.tabs button[aria-current=page] { color: var(--ink); box-shadow: inset 0 3px 0 var(--head); }
+.spin { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: s 0.8s linear infinite; vertical-align: -2px; }
+@keyframes s { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+.leaflet-container { font: 13px var(--f-body); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">Wind<span>Watt</span></div>
+    <div class="status" id="status"></div>
+  </header>
+
+  <!-- TRAINING -->
+  <section id="view-run" class="wrap" style="padding:0;max-width:none">
+    <div class="card">
+      <label class="f" for="actSel">Training
+        <select id="actSel"></select>
+      </label>
+      <div class="row" style="margin-top:10px">
+        <button id="syncBtn" type="button">Strava verversen</button>
+        <span class="note" id="syncNote"></span>
+      </div>
+    </div>
+
+    <div class="runhead" id="runHead"></div>
+
+    <div class="card">
+      <h2>Deze training</h2>
+      <div style="display:grid;gap:12px">
+        <div>
+          <div class="note" style="margin-bottom:6px">Kar</div>
+          <div class="seg" id="cartSeg" role="group" aria-label="Kar"></div>
+        </div>
+        <div class="grid2">
+          <label class="f" for="surfaceSel">Ondergrond <select id="surfaceSel"></select></label>
+          <label class="f" for="terrainSel">Beschutting route <select id="terrainSel"></select></label>
+        </div>
+        <label class="f" for="extraKg">Extra bagage in kar (kg) <input id="extraKg" type="number" min="0" max="20" step="0.5" inputmode="decimal"></label>
+        <div>
+          <label class="toggle" for="windManual"><input id="windManual" type="checkbox"> Wind handmatig invullen</label>
+        </div>
+        <div class="grid2" id="windInputs">
+          <label class="f" for="windMs">Wind op 10 m (m/s) <input id="windMs" type="number" min="0" max="30" step="0.5" inputmode="decimal"></label>
+          <label class="f" for="windFrom">Wind uit (°, 270 = west) <input id="windFrom" type="number" min="0" max="359" step="5" inputmode="numeric"></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="windline" id="windLine"></div>
+    <div class="tiles" id="tiles"></div>
+
+    <div class="card">
+      <h2>Vermogen</h2>
+      <div class="legend" id="pLegend"></div>
+      <div class="chart" id="pChart"></div>
+    </div>
+
+    <div class="card">
+      <h2>Waar ging de energie heen</h2>
+      <div class="bars" id="bars"></div>
+    </div>
+
+    <div class="card">
+      <h2>Tegenwind langs de route</h2>
+      <div id="map"></div>
+      <div class="scale"><span>mee</span><div class="ramp"></div><span>tegen</span></div>
+    </div>
+  </section>
+
+  <!-- LOGBOEK -->
+  <section id="view-log" hidden style="display:grid;gap:14px">
+    <div class="card">
+      <h2>Belasting per week (rTSS)</h2>
+      <div class="chart" id="wkChart" style="height:180px"></div>
+    </div>
+    <div class="card">
+      <h2>Geanalyseerde trainingen</h2>
+      <div class="scroll" id="logTable"></div>
+    </div>
+  </section>
+
+  <!-- INSTELLINGEN -->
+  <section id="view-set" hidden style="display:grid;gap:14px">
+    <div class="card">
+      <h2>Profiel</h2>
+      <div class="grid2">
+        <label class="f" for="p_heightCm">Lengte (cm) <input id="p_heightCm" type="number" step="1" inputmode="numeric"></label>
+        <label class="f" for="p_massKg">Gewicht (kg) <input id="p_massKg" type="number" step="0.5" inputmode="decimal"></label>
+        <label class="f" for="p_threshPace">Drempeltempo (m:ss/km) <input id="p_threshPace" type="text" inputmode="numeric" placeholder="4:30"></label>
+        <label class="f" for="p_ecor">Loopkosten ECOR (J/kg/m) <input id="p_ecor" type="number" step="0.01" inputmode="decimal"></label>
+        <label class="f" for="p_kid1Kg">Kind 1 (kg) <input id="p_kid1Kg" type="number" step="0.5" inputmode="decimal"></label>
+        <label class="f" for="p_kid2Kg">Kind 2 (kg) <input id="p_kid2Kg" type="number" step="0.5" inputmode="decimal"></label>
+      </div>
+      <p class="note">Drempeltempo: het tempo dat je ongeveer een uur vol kunt houden. Daaruit volgt je drempelvermogen voor rTSS.</p>
+    </div>
+
+    <div class="card">
+      <h2>Luchtweerstand (CdA)</h2>
+      <div class="grid2">
+        <label class="f" for="p_runnerCd">Cd loper <input id="p_runnerCd" type="number" step="0.01" inputmode="decimal"></label>
+        <label class="f" for="p_shielding">Luwte achter kar (0–0,7) <input id="p_shielding" type="number" step="0.01" inputmode="decimal"></label>
+        <label class="f" for="p_cartMass">Massa kar (kg) <input id="p_cartMass" type="number" step="0.1" inputmode="decimal"></label>
+        <label class="f" for="p_cartCd">Cd kar <input id="p_cartCd" type="number" step="0.01" inputmode="decimal"></label>
+        <label class="f" for="p_cartWidth">Breedte kar incl. wielen (m) <input id="p_cartWidth" type="number" step="0.01" inputmode="decimal"></label>
+        <label class="f" for="p_cartHeight">Hoogte cabine (m) <input id="p_cartHeight" type="number" step="0.01" inputmode="decimal"></label>
+        <label class="f" for="p_cartFill">Dichte deel van dat vlak <input id="p_cartFill" type="number" step="0.01" inputmode="decimal"></label>
+      </div>
+      <div id="cdaOut" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
+      <h2>Strava</h2>
+      <div style="display:grid;gap:10px">
+        <p class="note" style="margin:0">Maak een app op strava.com/settings/api met als callback-domein het domein van deze pagina (<b id="cbDomain"></b>). Sleutels blijven alleen op dit apparaat.</p>
+        <div class="grid2">
+          <label class="f" for="s_clientId">Client ID <input id="s_clientId" type="text" inputmode="numeric" autocomplete="off"></label>
+          <label class="f" for="s_clientSecret">Client secret <input id="s_clientSecret" type="password" autocomplete="off"></label>
+        </div>
+        <div class="row">
+          <button class="primary" id="connectBtn" type="button">Koppel met Strava</button>
+          <button class="ghost" id="disconnectBtn" type="button">Ontkoppel</button>
+        </div>
+        <details>
+          <summary class="note">Koppelen lukt niet? Plak een refresh token</summary>
+          <div class="row" style="margin-top:8px">
+            <input id="s_refresh" type="password" placeholder="refresh token" style="flex:1 1 200px">
+            <button id="refreshBtn" type="button">Gebruik token</button>
+          </div>
+        </details>
+        <div class="note" id="stravaNote"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Opslag</h2>
+      <div class="row">
+        <button id="clearCache" type="button">Weer- en routecache wissen</button>
+      </div>
+      <p class="note" id="storeNote"></p>
+    </div>
+  </section>
+</div>
+
+<nav class="tabs" aria-label="Weergave">
+  <button type="button" data-view="run" aria-current="page">Training</button>
+  <button type="button" data-view="log">Logboek</button>
+  <button type="button" data-view="set">Instellingen</button>
+</nav>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
