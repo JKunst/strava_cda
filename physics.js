@@ -207,6 +207,65 @@ export function summarize(track, o, p, ftp) {
   };
 }
 
+// ------------------------------------------------------------------ rondes
+
+const TRACK_KEYS = ["time", "speed", "grade", "bearing", "windSpeed", "windFrom", "tempC", "pressure"];
+
+export function sliceTrack(track, i0, i1, f = 1) {
+  const s = {};
+  for (const k of TRACK_KEYS) s[k] = track[k].slice(i0, i1 + 1);
+  if (f !== 1) s.speed = s.speed.map((v) => v * f);
+  return s;
+}
+
+function moveWeights(time, speed) {
+  return time.map((t, k) => {
+    let dt = k === 0 ? (time[1] - time[0] || 1) : t - time[k - 1];
+    dt = Math.min(Math.max(dt, 0), 10);
+    return speed[k] > 0.5 ? dt : 0;
+  });
+}
+
+function wmean(arr, w) {
+  let s = 0, ws = 0;
+  for (let k = 0; k < arr.length; k++) { s += arr[k] * w[k]; ws += w[k]; }
+  return ws ? s / ws : 0;
+}
+
+/** Snelheid waarbij vlak, windstil en zonder kar vermogen P nodig is. */
+export function equivSpeed(P, p, rho = 1.225) {
+  const a = 0.5 * rho * runnerCdA(p), b = p.ecor * p.massKg;
+  let v = P / b;
+  for (let k = 0; k < 30; k++) v -= (b * v + a * v ** 3 - P) / (b + 3 * a * v ** 2);
+  return Math.max(v, 0);
+}
+
+/**
+ * Ronde i0..i1: gemiddeld vermogen met de werkelijke opzet, en de snelheidsfactor
+ * waarmee je bij hetzelfde vermogen zou lopen
+ *  - fNoCart: zonder kar, maar met dezelfde wind en helling
+ *  - fBare:   vlak, windstil, zonder kar
+ */
+export function lapStats(track, p, run, i0, i1) {
+  const s = sliceTrack(track, i0, i1);
+  const w = moveWeights(s.time, s.speed);
+  const o = computePower(s, p, run);
+  const P = wmean(o.power, w);
+  let secs = 0, dist = 0;
+  for (let k = 0; k < w.length; k++) { secs += w[k]; dist += s.speed[k] * w[k]; }
+  const v = secs ? dist / secs : 0;
+  const noCart = { ...run, withCart: false };
+  // Uniforme schaal van de snelheid: alle tijdstappen schalen gelijk, dus de weging blijft dezelfde.
+  const pAt = (f) => wmean(computePower(sliceTrack(track, i0, i1, f), p, noCart).power, w);
+  let lo = 0.3, hi = 3;
+  for (let k = 0; k < 40; k++) {
+    const mid = (lo + hi) / 2;
+    if (pAt(mid) < P) lo = mid; else hi = mid;
+  }
+  const vBare = equivSpeed(P, p, wmean(o.rho, w) || 1.225);
+  return { secs, dist, v, power: P, fNoCart: (lo + hi) / 2, fBare: v ? vBare / v : 1 };
+}
+
 export function thresholdFromPace(paceSPerKm, p, rho = 1.225) {
   const v = 1000 / paceSPerKm;
   return p.ecor * p.massKg * v + 0.5 * rho * runnerCdA(p) * v ** 3;

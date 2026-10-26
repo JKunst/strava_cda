@@ -42,7 +42,7 @@ const CART = [
 const DEMO_ID = "demo";
 
 let profile = { ...DEFAULT_PROFILE, ...LS.get("profile", {}) };
-const state = { id: null, meta: null, base: null, weather: null };
+const state = { id: null, meta: null, base: null, weather: null, laps: [], track: null, run: null };
 
 const $ = (id) => document.getElementById(id);
 const fmt = (x, d = 0) => Number(x).toLocaleString("nl-NL", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -99,6 +99,30 @@ async function getStreams(id) {
   return s;
 }
 
+async function getLaps(id) {
+  const key = "laps:" + id;
+  const cached = await idb.get(key);
+  if (cached) return cached;
+  const raw = await api(`/activities/${id}/laps`);
+  const laps = raw.map((l) => ({ name: l.name, start_index: l.start_index, end_index: l.end_index,
+    distance: l.distance, moving_time: l.moving_time, elapsed_time: l.elapsed_time, start_date: l.start_date }));
+  await idb.set(key, laps);
+  return laps;
+}
+
+function mapLaps(laps, base, meta) {
+  const n = base.time.length, t0 = Date.parse(meta.start_date) / 1000;
+  return laps.map((l) => {
+    let i0 = l.start_index, i1 = l.end_index;
+    if (!(i1 < n && i0 < i1)) {
+      const off = Date.parse(l.start_date) / 1000 - t0;
+      i0 = base.time.findIndex((t) => t >= off);
+      i1 = base.time.findLastIndex((t) => t <= off + l.elapsed_time);
+    }
+    return { ...l, i0, i1: Math.min(i1, n - 1) };
+  }).filter((l) => l.i0 >= 0 && l.i1 - l.i0 >= 3);
+}
+
 // ------------------------------------------------------------------ weer
 async function getWeather(id, lat, lon, startUnix, endUnix) {
   const all = LS.get("weather", {});
@@ -134,21 +158,33 @@ async function getWeather(id, lat, lon, startUnix, endUnix) {
 
 // ------------------------------------------------------------------ tracks
 function demoTrack() {
-  const v = 3.2, n = Math.floor(10000 / v), lat0 = 51.92, lon0 = 4.48;
-  const time = [], lat = [], lon = [], alt = [], dist = [];
-  for (let k = 0; k < n; k++) {
-    const d = v * k, x = d < 5000 ? d : 10000 - d;
-    time.push(k); dist.push(d); lat.push(lat0);
+  const lat0 = 51.92, lon0 = 4.48;
+  const segs = [[2000, 3.0, "Inlopen"]];
+  for (let r = 1; r <= 5; r++) segs.push([800, 4.0, `Interval ${r}`], [400, 2.8, "Dribbel"]);
+  segs.push([2000, 3.0, "Uitlopen"]);
+  const time = [], lat = [], lon = [], alt = [], dist = [], speed = [], laps = [];
+  let d = 0, t = 0;
+  const push = (v) => {
+    const x = d < 5000 ? d : 10000 - d;
+    time.push(t); dist.push(d); speed.push(v); lat.push(lat0);
     lon.push(lon0 + x / (111320 * Math.cos((lat0 * Math.PI) / 180)));
     alt.push(2 + 12 * Math.exp(-(((x - 2500) / 250) ** 2)));
+  };
+  for (const [len, v, name] of segs) {
+    const i0 = time.length, end = d + len;
+    while (d < end - 1e-6) { push(v); t += 1; d = Math.min(d + v, end); }
+    laps.push({ name, i0, i1: time.length - 1, distance: len, moving_time: time.length - i0 });
   }
+  push(3.0);
+  const n = time.length;
   const grade = alt.map((_, k) => {
     const a = Math.max(0, k - 1), b = Math.min(n - 1, k + 1);
-    return (alt[b] - alt[a]) / (dist[b] - dist[a]);
+    return (alt[b] - alt[a]) / Math.max(dist[b] - dist[a], 0.1);
   });
   return {
-    meta: { id: DEMO_ID, name: "Demo: 10 km heen en terug", start_date: "2026-10-01T08:00:00Z", start_date_local: "2026-10-01T10:00:00", distance: 10000, moving_time: n },
-    base: { time, lat, lon, dist, speed: new Array(n).fill(v), grade, startUnix: Date.parse("2026-10-01T08:00:00Z") / 1000 },
+    meta: { id: DEMO_ID, name: "Demo: 10 km met 5 × 800 m", start_date: "2026-10-01T08:00:00Z", start_date_local: "2026-10-01T10:00:00", distance: 10000, moving_time: t },
+    base: { time, lat, lon, dist, speed, grade, startUnix: Date.parse("2026-10-01T08:00:00Z") / 1000 },
+    laps,
   };
 }
 
@@ -184,7 +220,8 @@ function thresholdPower() {
 
 function runSetup(id) {
   const runs = LS.get("runs", {});
-  return { ...DEFAULT_SETUP, manual: id === DEMO_ID, ...(runs[id]?.setup || {}) };
+  const demo = id === DEMO_ID ? { manual: true, cart: "both" } : {};
+  return { ...DEFAULT_SETUP, ...demo, ...(runs[id]?.setup || {}) };
 }
 
 function saveRun(id, setup, result) {
@@ -244,6 +281,8 @@ function recompute() {
   renderTiles(res);
   renderPowerChart(b, o);
   renderBars(res);
+  state.track = track; state.run = run;
+  renderLaps();
   renderMap(b, o);
 }
 
@@ -367,6 +406,60 @@ function renderBars(r) {
       <span class="fill ${v >= 0 ? "pos" : "neg"}" style="left:${left}%;width:${Math.max(w, v ? 0.6 : 0)}%"></span></span>
       <span class="val">${i && v >= 0 ? "+" : ""}${fmt(v)} kJ</span></div>`;
   }).join("");
+}
+
+function fmtTime(sec) {
+  sec = Math.round(sec);
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), x = sec % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(x).padStart(2, "0")}` : `${m}:${String(x).padStart(2, "0")}`;
+}
+
+function renderLaps() {
+  const laps = state.laps || [];
+  const seg = $("lapSeg");
+  if (laps.length < 2) {
+    seg.hidden = true; $("lapSum").innerHTML = ""; $("lapNote").textContent = "";
+    $("lapBody").innerHTML = `<p class="note">Deze training heeft één ronde. Druk bij intervallen op de lapknop van je horloge (of zet auto-lap aan); dan verschijnen de rondes hier.</p>`;
+    return;
+  }
+  seg.hidden = false;
+  const withCart = state.run.withCart;
+  const mode = withCart ? LS.get("lapMode", "nocart") : "bare";
+  seg.innerHTML = [["nocart", "Zonder kar"], ["bare", "Kaal: ook geen wind en helling"]].map(([k, lab]) =>
+    `<button type="button" data-mode="${k}" aria-pressed="${mode === k}" ${k === "nocart" && !withCart ? "disabled" : ""}>${lab}</button>`).join("");
+
+  const rows = laps.map((l, i) => {
+    const s = ph.lapStats(state.track, profile, state.run, l.i0, l.i1);
+    const f = mode === "nocart" ? s.fNoCart : s.fBare;
+    const t = l.moving_time || s.secs, d = l.distance || s.dist;
+    return { n: i + 1, name: l.name, d, t, v: d / t, P: s.power, t2: t / f, v2: (d / t) * f };
+  });
+  const sorted = rows.map((r) => r.v).sort((a, b) => a - b);
+  const med = sorted[Math.floor(sorted.length / 2)];
+  rows.forEach((r) => { r.fast = r.v > med * 1.06; });
+  const fast = rows.filter((r) => r.fast);
+
+  const lab = mode === "nocart" ? "Zonder kar" : "Kaal";
+  if (fast.length) {
+    const d = fast.reduce((a, r) => a + r.d, 0), t = fast.reduce((a, r) => a + r.t, 0), t2 = fast.reduce((a, r) => a + r.t2, 0);
+    $("lapSum").innerHTML = `<div class="lapsum">
+      <div><div class="k">Snelle rondes (${fast.length})</div><div class="big">${ph.paceStr(d / t)}<small>/km</small></div></div>
+      <div><div class="k">${lab}</div><div class="big">${ph.paceStr(d / t2)}<small>/km</small></div></div>
+      <div><div class="k">Verschil</div><div class="big">${t2 - t <= 0 ? "−" : "+"}${fmt(Math.abs((t2 - t) / (d / 1000)))}<small> s/km</small></div></div>
+    </div>`;
+  } else $("lapSum").innerHTML = "";
+
+  const km = (d) => d >= 1000 ? `${fmt(d / 1000, Math.abs(d % 1000) < 5 ? 0 : 2)} km` : `${fmt(d)} m`;
+  $("lapBody").innerHTML = `<table class="laps"><thead><tr><th>#</th><th class="num">Afst.</th><th class="num">Gelopen</th><th class="num">W</th>
+    <th class="num">${mode === "nocart" ? "Zonder" : "Kaal"}</th><th class="num">Δ s</th></tr></thead><tbody>` +
+    rows.map((r) => `<tr class="${r.fast ? "fast" : ""}"><td>${r.n}</td><td class="num">${km(r.d)}</td>
+      <td class="num">${fmtTime(r.t)}<small>${ph.paceStr(r.v)}/km</small></td><td class="num">${fmt(r.P)}</td>
+      <td class="num"><b>${fmtTime(r.t2)}</b><small>${ph.paceStr(r.v2)}/km</small></td>
+      <td class="num">${r.t2 - r.t <= 0 ? "−" : "+"}${fmt(Math.abs(r.t2 - r.t))}</td></tr>`).join("") +
+    `</tbody></table>`;
+  $("lapNote").textContent = mode === "nocart"
+    ? "Vet met streep: snelle ronde. Zelfde vermogen per ronde, omgerekend naar lopen zonder kar met dezelfde wind en helling."
+    : "Vet met streep: snelle ronde. Zelfde vermogen per ronde, omgerekend naar vlak, windstil en zonder kar.";
 }
 
 let map, segLayer;
@@ -500,12 +593,13 @@ async function selectActivity(id) {
   try {
     if (id === DEMO_ID) {
       const d = demoTrack();
-      state.meta = d.meta; state.base = d.base; state.weather = null;
+      state.meta = d.meta; state.base = d.base; state.weather = null; state.laps = d.laps;
     } else {
       state.meta = LS.get("activities", []).find((a) => String(a.id) === String(id));
       const s = await getStreams(id);
       if (!s.latlng) throw new Error("Deze training heeft geen GPS-data");
       state.base = trackFromStreams(s, state.meta);
+      try { state.laps = mapLaps(await getLaps(id), state.base, state.meta); } catch { state.laps = []; }
       const b = state.base;
       const mid = Math.floor(b.lat.length / 2);
       try {
@@ -604,6 +698,12 @@ function bindRun() {
   $("windFrom").addEventListener("change", (e) => updateSetup({ windFrom: ((parseFloat(e.target.value) || 0) % 360 + 360) % 360 }));
   $("actSel").addEventListener("change", (e) => selectActivity(e.target.value));
   $("syncBtn").addEventListener("click", doSync);
+  $("lapSeg").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b || b.disabled) return;
+    LS.set("lapMode", b.dataset.mode);
+    renderLaps();
+  });
 }
 
 function bindTabs() {

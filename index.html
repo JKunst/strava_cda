@@ -115,6 +115,17 @@ th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line
 th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
 td.num, th.num { text-align: right; }
 .scroll { overflow-x: auto; }
+tr.fast td { font-weight: 600; }
+tr.fast td:first-child { box-shadow: inset 3px 0 0 var(--head); }
+table.laps td:first-child, table.laps th:first-child { padding-left: 10px; }
+table.laps td small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
+table.laps td, table.laps th { padding: 7px 5px; }
+.chip { display: inline-block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; padding: 1px 6px; border-radius: 999px; background: var(--chip); color: var(--ink); margin-left: 6px; vertical-align: 1px; }
+.seg button:disabled { opacity: .45; cursor: not-allowed; }
+.lapsum { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 12px; }
+.lapsum .k { font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.lapsum .big { font: 600 28px/1.1 var(--f-num); font-variant-numeric: tabular-nums; }
+.lapsum .big small { font-size: 16px; font-weight: 500; color: var(--muted); }
 .note { font-size: 13px; color: var(--muted); }
 .note.err { color: var(--head); }
 .kv { display: flex; justify-content: space-between; gap: 10px; font-size: 14px; font-variant-numeric: tabular-nums; padding: 4px 0; border-bottom: 1px dashed var(--line); }
@@ -185,6 +196,14 @@ nav.tabs button[aria-current=page] { color: var(--ink); box-shadow: inset 0 3px 
       <h2>Vermogen</h2>
       <div class="legend" id="pLegend"></div>
       <div class="chart" id="pChart"></div>
+    </div>
+
+    <div class="card" id="lapCard">
+      <h2>Rondes</h2>
+      <div class="seg" id="lapSeg" role="group" aria-label="Vergelijk met" style="margin-bottom:12px"></div>
+      <div id="lapSum"></div>
+      <div class="scroll" id="lapBody"></div>
+      <p class="note" id="lapNote" style="margin:8px 0 0"></p>
     </div>
 
     <div class="card">
