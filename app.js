@@ -159,21 +159,25 @@ async function getWeather(id, lat, lon, startUnix, endUnix) {
 // ------------------------------------------------------------------ tracks
 function demoTrack() {
   const lat0 = 51.92, lon0 = 4.48;
-  const segs = [[2000, 3.0, "Inlopen"]];
-  for (let r = 1; r <= 5; r++) segs.push([800, 4.0, `Interval ${r}`], [400, 2.8, "Dribbel"]);
-  segs.push([2000, 3.0, "Uitlopen"]);
+  // [type, waarde, snelheid]: afstand in m of tijd in s
+  const segs = [["dist", 2000, 3.0]];
+  for (let r = 1; r <= 5; r++) segs.push(["time", 180, 4.0], ["time", 120, 2.8]);
+  segs.push(["dist", 2000, 3.0]);
+  const total = segs.reduce((a, [k, x, v]) => a + (k === "dist" ? x : x * v), 0), half = total / 2;
   const time = [], lat = [], lon = [], alt = [], dist = [], speed = [], laps = [];
   let d = 0, t = 0;
   const push = (v) => {
-    const x = d < 5000 ? d : 10000 - d;
+    const x = d < half ? d : total - d;
     time.push(t); dist.push(d); speed.push(v); lat.push(lat0);
     lon.push(lon0 + x / (111320 * Math.cos((lat0 * Math.PI) / 180)));
     alt.push(2 + 12 * Math.exp(-(((x - 2500) / 250) ** 2)));
   };
-  for (const [len, v, name] of segs) {
-    const i0 = time.length, end = d + len;
-    while (d < end - 1e-6) { push(v); t += 1; d = Math.min(d + v, end); }
-    laps.push({ name, i0, i1: time.length - 1, distance: len, moving_time: time.length - i0 });
+  for (const [kind, x, v] of segs) {
+    const i0 = time.length, d0 = d;
+    if (kind === "dist") { const end = d + x; while (d < end - 1e-6) { push(v); t += 1; d = Math.min(d + v, end); } }
+    else for (let k = 0; k < x; k++) { push(v); t += 1; d += v; }
+    const dur = time.length - i0;
+    laps.push({ i0, i1: time.length - 1, distance: d - d0, moving_time: dur, elapsed_time: dur });
   }
   push(3.0);
   const n = time.length;
@@ -182,7 +186,7 @@ function demoTrack() {
     return (alt[b] - alt[a]) / Math.max(dist[b] - dist[a], 0.1);
   });
   return {
-    meta: { id: DEMO_ID, name: "Demo: 10 km met 5 × 800 m", start_date: "2026-10-01T08:00:00Z", start_date_local: "2026-10-01T10:00:00", distance: 10000, moving_time: t },
+    meta: { id: DEMO_ID, name: "Demo: 5 × 3 min", start_date: "2026-10-01T08:00:00Z", start_date_local: "2026-10-01T10:00:00", distance: total, moving_time: t },
     base: { time, lat, lon, dist, speed, grade, startUnix: Date.parse("2026-10-01T08:00:00Z") / 1000 },
     laps,
   };
@@ -226,7 +230,7 @@ function runSetup(id) {
 
 function saveRun(id, setup, result) {
   const runs = LS.get("runs", {});
-  runs[id] = { setup, result, meta: state.meta };
+  runs[id] = { ...(runs[id] || {}), setup, result, meta: state.meta };
   LS.set("runs", runs);
 }
 
@@ -428,11 +432,13 @@ function renderLaps() {
   seg.innerHTML = [["nocart", "Zonder kar"], ["bare", "Kaal: ook geen wind en helling"]].map(([k, lab]) =>
     `<button type="button" data-mode="${k}" aria-pressed="${mode === k}" ${k === "nocart" && !withCart ? "disabled" : ""}>${lab}</button>`).join("");
 
+  const kinds = LS.get("runs", {})[state.id]?.lapKinds || {};
   const rows = laps.map((l, i) => {
     const s = ph.lapStats(state.track, profile, state.run, l.i0, l.i1);
     const f = mode === "nocart" ? s.fNoCart : s.fBare;
     const t = l.moving_time || s.secs, d = l.distance || s.dist;
-    return { n: i + 1, name: l.name, d, t, v: d / t, P: s.power, t2: t / f, v2: (d / t) * f };
+    const kind = kinds[i] || guessLapKind(l);
+    return { i, n: i + 1, kind, d, t, tDef: l.elapsed_time || t, v: d / t, f, P: s.power, v2: (d / t) * f };
   });
   const sorted = rows.map((r) => r.v).sort((a, b) => a - b);
   const med = sorted[Math.floor(sorted.length / 2)];
@@ -441,25 +447,42 @@ function renderLaps() {
 
   const lab = mode === "nocart" ? "Zonder kar" : "Kaal";
   if (fast.length) {
-    const d = fast.reduce((a, r) => a + r.d, 0), t = fast.reduce((a, r) => a + r.t, 0), t2 = fast.reduce((a, r) => a + r.t2, 0);
+    const d = fast.reduce((a, r) => a + r.d, 0), t = fast.reduce((a, r) => a + r.t, 0);
+    const t2 = fast.reduce((a, r) => a + r.t / r.f, 0);
+    const v = d / t, v2 = d / t2;
     $("lapSum").innerHTML = `<div class="lapsum">
-      <div><div class="k">Snelle rondes (${fast.length})</div><div class="big">${ph.paceStr(d / t)}<small>/km</small></div></div>
-      <div><div class="k">${lab}</div><div class="big">${ph.paceStr(d / t2)}<small>/km</small></div></div>
-      <div><div class="k">Verschil</div><div class="big">${t2 - t <= 0 ? "−" : "+"}${fmt(Math.abs((t2 - t) / (d / 1000)))}<small> s/km</small></div></div>
+      <div><div class="k">Snelle rondes (${fast.length})</div><div class="big">${ph.paceStr(v)}<small>/km</small></div></div>
+      <div><div class="k">${lab}</div><div class="big">${ph.paceStr(v2)}<small>/km</small></div></div>
+      <div><div class="k">Verschil</div><div class="big">${v2 >= v ? "−" : "+"}${fmt(Math.abs(1000 / v - 1000 / v2))}<small> s/km</small></div></div>
     </div>`;
   } else $("lapSum").innerHTML = "";
 
   const km = (d) => d >= 1000 ? `${fmt(d / 1000, Math.abs(d % 1000) < 5 ? 0 : 2)} km` : `${fmt(d)} m`;
-  $("lapBody").innerHTML = `<table class="laps"><thead><tr><th>#</th><th class="num">Afst.</th><th class="num">Gelopen</th><th class="num">W</th>
-    <th class="num">${mode === "nocart" ? "Zonder" : "Kaal"}</th><th class="num">Δ s</th></tr></thead><tbody>` +
-    rows.map((r) => `<tr class="${r.fast ? "fast" : ""}"><td>${r.n}</td><td class="num">${km(r.d)}</td>
-      <td class="num">${fmtTime(r.t)}<small>${ph.paceStr(r.v)}/km</small></td><td class="num">${fmt(r.P)}</td>
-      <td class="num"><b>${fmtTime(r.t2)}</b><small>${ph.paceStr(r.v2)}/km</small></td>
-      <td class="num">${r.t2 - r.t <= 0 ? "−" : "+"}${fmt(Math.abs(r.t2 - r.t))}</td></tr>`).join("") +
-    `</tbody></table>`;
-  $("lapNote").textContent = mode === "nocart"
-    ? "Vet met streep: snelle ronde. Zelfde vermogen per ronde, omgerekend naar lopen zonder kar met dezelfde wind en helling."
-    : "Vet met streep: snelle ronde. Zelfde vermogen per ronde, omgerekend naar vlak, windstil en zonder kar.";
+  const sign = (x) => (x < 0 ? "−" : "+") + fmt(Math.abs(x));
+  $("lapBody").innerHTML = `<table class="laps"><thead><tr><th>#</th><th>Interval</th><th class="num">Gelopen</th><th class="num">W</th>
+    <th class="num">${mode === "nocart" ? "Zonder kar" : "Kaal"}</th></tr></thead><tbody>` +
+    rows.map((r) => {
+      const isTime = r.kind === "time";
+      const def = isTime ? fmtTime(r.tDef) : km(r.d);
+      const done = isTime ? `${km(r.d)}<small>${ph.paceStr(r.v)}/km</small>` : `${fmtTime(r.t)}<small>${ph.paceStr(r.v)}/km</small>`;
+      const est = isTime
+        ? `<b>${km(r.d * r.f)}</b><small>${ph.paceStr(r.v2)}/km · ${sign(r.d * r.f - r.d)} m</small>`
+        : `<b>${fmtTime(r.t / r.f)}</b><small>${ph.paceStr(r.v2)}/km · ${sign(r.t / r.f - r.t)} s</small>`;
+      return `<tr class="${r.fast ? "fast" : ""}"><td>${r.n}</td>
+        <td><button type="button" class="kind" data-lap="${r.i}" aria-label="Interval ${r.n}: ${isTime ? "op tijd" : "op afstand"}, tik om te wisselen">${def}<small>${isTime ? "op tijd" : "op afstand"}</small></button></td>
+        <td class="num">${done}</td><td class="num">${fmt(r.P)}</td><td class="num">${est}</td></tr>`;
+    }).join("") + `</tbody></table>`;
+  $("lapNote").textContent = (mode === "nocart"
+    ? "Zelfde vermogen, zonder kar, met dezelfde wind en helling. "
+    : "Zelfde vermogen, vlak, windstil en zonder kar. ") +
+    "Op afstand: tijd voor dezelfde afstand. Op tijd: afstand in dezelfde tijd. Tik op een interval om te wisselen. Vet met streep: snelle ronde.";
+}
+
+function guessLapKind(l) {
+  const t = l.elapsed_time || l.moving_time, d = l.distance;
+  const tRound = t >= 30 && Math.abs(t - Math.round(t / 15) * 15) <= 1;
+  const dRound = d >= 100 && Math.abs(d - Math.round(d / 100) * 100) <= Math.max(5, d * 0.01);
+  return tRound && !dRound ? "time" : "dist";
 }
 
 let map, segLayer;
@@ -698,6 +721,16 @@ function bindRun() {
   $("windFrom").addEventListener("change", (e) => updateSetup({ windFrom: ((parseFloat(e.target.value) || 0) % 360 + 360) % 360 }));
   $("actSel").addEventListener("change", (e) => selectActivity(e.target.value));
   $("syncBtn").addEventListener("click", doSync);
+  $("lapBody").addEventListener("click", (e) => {
+    const b = e.target.closest("button.kind");
+    if (!b) return;
+    const runs = LS.get("runs", {});
+    const r = runs[state.id] || (runs[state.id] = { setup: runSetup(state.id), meta: state.meta });
+    const i = b.dataset.lap, cur = r.lapKinds?.[i] || guessLapKind(state.laps[i]);
+    r.lapKinds = { ...(r.lapKinds || {}), [i]: cur === "time" ? "dist" : "time" };
+    LS.set("runs", runs);
+    renderLaps();
+  });
   $("lapSeg").addEventListener("click", (e) => {
     const b = e.target.closest("button");
     if (!b || b.disabled) return;

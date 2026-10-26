@@ -120,6 +120,9 @@ tr.fast td:first-child { box-shadow: inset 3px 0 0 var(--head); }
 table.laps td:first-child, table.laps th:first-child { padding-left: 10px; }
 table.laps td small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
 table.laps td, table.laps th { padding: 7px 5px; }
+button.kind { all: unset; cursor: pointer; font-weight: inherit; border-bottom: 1px dashed var(--muted); line-height: 1.3; }
+button.kind small { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
+button.kind:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .chip { display: inline-block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; padding: 1px 6px; border-radius: 999px; background: var(--chip); color: var(--ink); margin-left: 6px; vertical-align: 1px; }
 .seg button:disabled { opacity: .45; cursor: not-allowed; }
 .lapsum { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 12px; }
